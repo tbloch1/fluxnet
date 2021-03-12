@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import datetime as dt
 import glob
 import os
 import matplotlib.pyplot as plt
@@ -32,3 +33,29 @@ def hetero_aleatoric(true,predval,predvar):
     rel_error = ((true-predval)**2)
     residual = 0.5*predvar # Training for the log_e(var)
     return (rel_error/(2*torch.exp(predvar))) + residual
+
+def timeseries_sample(data, nbins=50, n_min=100,
+                      train_frac=0.7, val_frac=0.2, test_frac=0.1):
+    data = data.sort_values('datetime')
+    data['seconds'] = [(i-dt.datetime(1970,1,1)).total_seconds()
+                       for i in data.datetime]
+    n, edges = np.histogram(data.seconds,bins=nbins)
+
+    train, val, test = [],[],[]
+
+    for amt, l_edge, r_edge in zip(n,edges[:-1],edges[1:]):
+        
+        subset = data[(data.seconds > l_edge)
+                          & (data.seconds < r_edge)]
+        
+        if amt > n_min:
+            train.append(subset[:int(train_frac*len(subset))])
+            val.append(subset[int(train_frac*len(subset))
+                              :int((train_frac+val_frac)*len(subset))])
+            test.append(subset[int((1-test_frac)*len(subset)):])
+        else:
+            train.append(subset)
+
+    return(pd.concat(train).sort_index(),
+           pd.concat(val).sort_index(),
+           pd.concat(test).sort_index())

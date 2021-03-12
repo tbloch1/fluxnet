@@ -1,3 +1,4 @@
+import pdb
 import numpy as np
 import pandas as pd
 import datetime as dt
@@ -50,6 +51,9 @@ target = args.target
 n_ensembles = args.n_ensembles
 n_hidden = args.n_hidden
 
+np.save('/storage/silver/stfc_cg/hf832176/'
+        +'data/goes/training/wandb/test.npy',np.arange(10))
+
 wandb.init(project="fluxnet", entity="tbloch",
            dir='/storage/silver/stfc_cg/hf832176/data/goes/training/')
 wandb.config.update(args)
@@ -59,7 +63,7 @@ with open('config.json', 'w') as f:
 
 fpath_g = '/storage/silver/stfc_cg/hf832176/data/goes/'
 fpath_t = '/storage/silver/stfc_cg/hf832176/data/THEMIS/'
-fpath_o = '/storage/silver/stfc_cg/hf832176/data/OMNI/1_min/'
+fpath_o = '/storage/silver/stfc_cg/hf832176/data/OMNI/'
 
 fnames_g = np.sort(glob.glob(fpath_g+'goes??.parquet'))
 fnames_t = np.sort(glob.glob(fpath_t+'???_mag.parquet'))
@@ -114,12 +118,16 @@ g13 = clean_goes(pd.read_parquet(fnames_g[0]))
 g14 = clean_goes(pd.read_parquet(fnames_g[1]))
 g15 = clean_goes(pd.read_parquet(fnames_g[2]))
 
-omni = pd.read_parquet(fpath_o+'2000_2020_nan.parquet')
-
+omni = pd.read_parquet(fpath_o+'1_min/2000_2020_nan.parquet')
+omni_h =  pd.read_parquet(fpath_o+'omni_H_2000_2020.parquet')
+omni_h = omni_h[['R1800','F10_INDEX1800']]
+omni_h.columns = ['ssn','f107']
+omni = omni.join(omni_h,how='left')
 
 def omni_goes_align(omni,goes,parameters):
     omni_params = [i for i in parameters if i in omni.columns]
     omni = omni[omni_params].interpolate()
+    omni = omni.interpolate('ffill')
     om_go = goes.join(omni,how='inner',rsuffix='_o')
     # params = [i+'_o' for i in omni_params]
     om_go = om_go.dropna()
@@ -140,7 +148,7 @@ def date_to_tod(date):
             / (24*60*60))
 
 print('THEMIS-GOES Conjunction Data')
-def mlt_conjunction(themis,goes,mlt_lim):
+def mlt_conjunction(themis,goes,mlt_lim,scname1,scname2):
     th_g = themis.join(goes,how='inner',rsuffix='_g')
     th_g['mlt_diff'] = [i if i <= 12 else np.abs(i-24)
                         for i in np.abs(th_g.mlt-th_g.mlt_g)]
@@ -150,6 +158,8 @@ def mlt_conjunction(themis,goes,mlt_lim):
     th_g['mlt_sin_g'] = np.sin(th_g.mlt_g)
     th_g['mlt_cos_g'] = np.cos(th_g.mlt_g)
 
+    th_g['datetime'] = th_g.index
+
     th_g['year_frac'] = [date_to_frac(date) for date in th_g.index]
     th_g['date_sin'] = np.sin(th_g.year_frac)
     th_g['date_cos'] = np.cos(th_g.year_frac)
@@ -158,14 +168,25 @@ def mlt_conjunction(themis,goes,mlt_lim):
     th_g['day_sin'] = np.sin(th_g.day_frac)
     th_g['day_cos'] = np.cos(th_g.day_frac)
 
+    th_g['tha'] = np.ones(len(th_g)) if scname1 == 'tha' else np.zeros(len(th_g))
+    th_g['thb'] = np.ones(len(th_g)) if scname1 == 'thb' else np.zeros(len(th_g))
+    th_g['thc'] = np.ones(len(th_g)) if scname1 == 'thc' else np.zeros(len(th_g))
+    th_g['thd'] = np.ones(len(th_g)) if scname1 == 'thd' else np.zeros(len(th_g))
+    th_g['the'] = np.ones(len(th_g)) if scname1 == 'the' else np.zeros(len(th_g))
+
+    th_g['g13'] = np.ones(len(th_g)) if scname2 == 'g13' else np.zeros(len(th_g))
+    th_g['g14'] = np.ones(len(th_g)) if scname2 == 'g14' else np.zeros(len(th_g))
+    th_g['g15'] = np.ones(len(th_g)) if scname2 == 'g15' else np.zeros(len(th_g))
+
+
     print(th_g.shape)
     return th_g
 
 th_g = []
-for themis in [tha,thb,thc,thd,the]:
-    for goes in [g13,g14,g15]:
-        th_g.append(mlt_conjunction(themis,goes,mltlim))
-        
+for themis,scname1 in zip([tha,thb,thc,thd,the],['tha','thb','thc','thd','the']):
+    for goes,scname2 in zip([g13,g14,g15],['g13','g14','g15']):
+        th_g.append(mlt_conjunction(themis,goes,mltlim,scname1,scname2))
+
 thgdf = pd.concat(th_g, ignore_index=True)
 print('Final Dataset Size: ',thgdf.shape)
 
@@ -174,29 +195,48 @@ data_time = time.time()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 devstr = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-X = thgdf[parameters].values
-
 target_parameters = [target]
 if heads == 'Multi':
     target_parameters = ['E_1', 'E_2', 'E_3', 'E_4', 'E_5', 'E_6',
                          'E_7', 'E_8', 'E_9', 'E_10', 'E_11']
-                         
-y = np.log10(thgdf[target_parameters]).values
 
-Xscaler = StandardScaler().fit(X[:int(0.6*len(X))])
-X = Xscaler.transform(X)
+trainset, valset, testset = helpers.timeseries_sample(thgdf)
 
-yscaler = StandardScaler().fit(y[:int(0.6*len(y))])
-y = yscaler.transform(y)
+# X = thgdf[parameters].values                         
+# y = np.log10(thgdf[target_parameters]).values
 
-Xtrain = torch.from_numpy(X[:int(0.6*len(X))])
-ytrain = torch.from_numpy(y[:int(0.6*len(y))])
+Xscaler = StandardScaler().fit(trainset[parameters].values)
+# X = Xscaler.transform(X)
 
-Xval = torch.from_numpy(X[int(0.6*len(X)):int(0.8*len(X))])
-yval = torch.from_numpy(y[int(0.6*len(y)):int(0.8*len(y))])
+yscaler = StandardScaler().fit(np.log10(trainset[target_parameters]).values)
+# y = yscaler.transform(y)
 
-Xtest = torch.from_numpy(X[int(0.8*len(X)):])
-ytest = torch.from_numpy(y[int(0.8*len(y)):])
+Xtrain = torch.from_numpy(Xscaler.transform(trainset[parameters].values))
+ytrain = torch.from_numpy(yscaler.transform(np.log10(trainset[target_parameters]).values))
+
+Xval = torch.from_numpy(Xscaler.transform(valset[parameters].values))
+yval = torch.from_numpy(yscaler.transform(np.log10(valset[target_parameters]).values))
+
+Xtest = torch.from_numpy(Xscaler.transform(testset[parameters].values))
+ytest = torch.from_numpy(yscaler.transform(np.log10(testset[target_parameters]).values))
+
+# X = thgdf[parameters].values                         
+# y = np.log10(thgdf[target_parameters]).values
+
+# Xscaler = StandardScaler().fit(X[:int(0.6*len(X))])
+# X = Xscaler.transform(X)
+
+# yscaler = StandardScaler().fit(y[:int(0.6*len(y))])
+# y = yscaler.transform(y)
+
+# Xtrain = torch.from_numpy(X[:int(0.6*len(X))])
+# ytrain = torch.from_numpy(y[:int(0.6*len(y))])
+
+# Xval = torch.from_numpy(X[int(0.6*len(X)):int(0.8*len(X))])
+# yval = torch.from_numpy(y[int(0.6*len(y)):int(0.8*len(y))])
+
+# Xtest = torch.from_numpy(X[int(0.8*len(X)):])
+# ytest = torch.from_numpy(y[int(0.8*len(y)):])
 
 
 if devstr == 'cuda':
@@ -215,9 +255,6 @@ if devstr == 'cuda':
     net = net.to(device)
 
 optimizer = optimiser(net.parameters(), lr=lr)
-# loss_func = loss_f()
-# if heads == 'Multi':
-#     loss_func = loss_f(reduction='none')
 
 loss_func = helpers.hetero_aleatoric
 
@@ -234,26 +271,72 @@ for epoch in range(n_epochs):
     outputs = net(Xtrain.float())
     prediction = outputs[:,:,0].view(-1,11)
     variance = outputs[:,:,1].view(-1,11)
+    variance = torch.where(variance > -15, variance,
+                           torch.tensor(-15).to(device).float())
+    # variance = torch.where(variance < 3, variance,
+    #                        torch.tensor(3).to(device).float())
     
     valout = net(Xval.float())
     valpred = valout[:,:,0].view(-1,11)
     valvar = valout[:,:,1].view(-1,11)
 
-
     trainloss = loss_func(ytrain.float(),prediction.float(),
-                            variance.float()).mean()
+                          variance.float())#.sum()
+    trainloss = torch.where(trainloss < 10000, trainloss,
+                            torch.tensor(10000).to(device).float()).median()
     loss_report = loss_func(ytrain.float(),prediction.float(),
                             variance.float())
     valloss = loss_func(yval.float(),valpred.float(),
                         valvar.float())
-    
+    # if torch.isnan(trainloss):
+    #     import pdb; pdb.set_trace()
+    # else:
+    #     cat1 = prediction
+    #     cat2 = variance
+
     if epoch%100 == 0:
         testout = net(Xtest.float())
         testpred = testout[:,:,0].view(-1,11)
         testvar = testout[:,:,1].view(-1,11)
         testloss = (loss_func(ytest.float(), testpred.float(),
                               testvar.float()))
-    
+
+        testpred1 = yscaler.inverse_transform(testpred.data.cpu().numpy())
+        testvar1 = yscaler.inverse_transform(testvar.data.cpu().numpy())
+        ytest_np = yscaler.inverse_transform(np.exp(ytest.data.cpu().numpy()))
+
+        plt.figure(figsize=(4,2.25),dpi=300)
+        plt.scatter(testset.seconds[-200:],ytest_np[-200:,5],c='C0')
+        plt.errorbar(x=testset.seconds[-200:],y=testpred1[-200:,5],
+                     yerr=testvar1[-200:,5],c='C1',fmt='o',capsize=6)
+        plt.ylabel('Log(flux)')
+        plt.xlabel('Unix epoch time')
+        plt.title('E_6')
+
+        wandb.log({"plot": plt})
+        plt.close()
+
+        plt.figure(figsize=(4,2.25),dpi=300)
+        plt.scatter(np.arange(200),
+                    np.exp(ytest.data.cpu().numpy())[-200:,5],c='C0')
+        plt.errorbar(x=np.arange(200),
+                     y=testpred.data.cpu().numpy()[-200:,5],
+                     yerr=testvar.data.cpu().numpy()[-200:,5],
+                     c='C1',fmt='o',capsize=6)
+        plt.ylabel('Log(flux)')
+        plt.xlabel('Unix epoch time')
+        plt.title('E_6 (scaled)')
+
+        wandb.log({"plot2": plt})
+        plt.close()
+
+        print('train loss: ',trainloss)
+        print('train pred: ', prediction.clone().detach().mean())
+        print('train var: ', variance.clone().detach().mean())
+        print('val loss: ',valloss.clone().detach().median())
+        print('val pred: ', valpred.clone().detach().mean())
+        print('val var: ', valvar.clone().detach().mean(),'\n')
+
 
     optimizer.zero_grad()   # clear gradients for next train
     try:
@@ -268,14 +351,13 @@ for epoch in range(n_epochs):
     yval_np = yscaler.inverse_transform(yval.data.cpu().numpy())
     error_report = (((valpred-yval_np)**2)/yval_np)
 
-
     if devstr == 'cuda':
         wandb.log({'Epoch': epoch,
-                   'Train Loss': loss_report.mean().data.cpu().numpy(),
-                   'Val Loss': valloss.mean().data.cpu().numpy(),
+                   'Train Loss': loss_report.median().data.cpu().numpy(),
+                   'Val Loss': valloss.median().data.cpu().numpy(),
                    'Val RSE max': error_report.max(),
                    'Val RSE median': np.median(error_report),
-                   'Test Loss': testloss.mean().data.cpu().numpy(),
+                   'Test Loss': testloss.median().data.cpu().numpy(),
                    'Val RSE E1 mean': error_report[0].mean(),
                    'Val RSE E2 mean': error_report[1].mean(),
                    'Val RSE E3 mean': error_report[2].mean(),
