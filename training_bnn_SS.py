@@ -281,7 +281,8 @@ for epoch in range(n_epochs):
 
     valout = net(Xval.float())
     valpred = valout[:,:,0].view(-1,11)
-    valvar = valout[:,:,1].view(-1,11)
+    val_sigma = valout[:,:,1].view(-1,11)
+    val_sigma = MIN_SIGMA + (MAX_SIGMA - MIN_SIGMA) * torch.sigmoid(val_sigma)
 
     trainloss = loss_func(ytrain.float(),
                           prediction.float(),
@@ -294,7 +295,7 @@ for epoch in range(n_epochs):
                             sigma.float())
     valloss = loss_func(yval.float(),
                         valpred.float(),
-                        valvar.float())
+                        val_sigma.float())
     # if torch.isnan(trainloss):
     #     import pdb; pdb.set_trace()
     # else:
@@ -304,18 +305,20 @@ for epoch in range(n_epochs):
     if epoch%100 == 0:
         testout = net(Xtest.float())
         testpred = testout[:,:,0].view(-1,11)
-        testvar = testout[:,:,1].view(-1,11)
+        test_sigma = testout[:,:,1].view(-1,11)
+        test_sigma = test_sigma.to(device).float()
+        test_sigma = MIN_SIGMA + (MAX_SIGMA - MIN_SIGMA) * torch.sigmoid(test_sigma)
         testloss = (loss_func(ytest.float(), testpred.float(),
-                              testvar.float()))
+                              test_sigma.float()))
 
         testpred1 = yscaler.inverse_transform(testpred.data.cpu().numpy())
-        testvar1 = yscaler.inverse_transform(testvar.data.cpu().numpy())
+        test_sigma1 = yscaler.inverse_transform(test_sigma.data.cpu().numpy())
         ytest_np = yscaler.inverse_transform(np.exp(ytest.data.cpu().numpy()))
 
         plt.figure(figsize=(4,2.25),dpi=300)
         plt.scatter(testset.seconds[-200:],ytest_np[-200:,5],c='C0')
         plt.errorbar(x=testset.seconds[-200:],y=testpred1[-200:,5],
-                     yerr=testvar1[-200:,5],c='C1',fmt='o',capsize=6)
+                     yerr=test_sigma1[-200:,5],c='C1',fmt='o',capsize=6)
         plt.ylabel('Log(flux)')
         plt.xlabel('Unix epoch time')
         plt.title('E_6')
@@ -342,7 +345,7 @@ for epoch in range(n_epochs):
         print('train var: ', sigma.mean())
         print('val loss: ',valloss.median())
         print('val pred: ', valpred.mean())
-        print('val var: ', valvar.mean(),'\n')
+        print('val var: ', val_sigma.mean(),'\n')
 
 
     optimizer.zero_grad()   # clear gradients for next train
