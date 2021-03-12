@@ -313,7 +313,7 @@ for epoch in range(n_epochs):
         plt.xlabel('Unix epoch time')
         plt.title('E_6')
 
-        wandb.log({"plot": plt})
+        wandb.log({"plot": wandb.Image(plt)})
         plt.close()
 
         plt.figure(figsize=(4,2.25),dpi=300)
@@ -327,15 +327,15 @@ for epoch in range(n_epochs):
         plt.xlabel('Unix epoch time')
         plt.title('E_6 (scaled)')
 
-        wandb.log({"plot2": plt})
+        wandb.log({"plot2": wandb.Image(plt)})
         plt.close()
 
         print('train loss: ',trainloss)
-        print('train pred: ', prediction.clone().detach().mean())
-        print('train var: ', variance.clone().detach().mean())
-        print('val loss: ',valloss.clone().detach().median())
-        print('val pred: ', valpred.clone().detach().mean())
-        print('val var: ', valvar.clone().detach().mean(),'\n')
+        print('train pred: ', prediction.mean())
+        print('train var: ', variance.mean())
+        print('val loss: ',valloss.median())
+        print('val pred: ', valpred.mean())
+        print('val var: ', valvar.mean(),'\n')
 
 
     optimizer.zero_grad()   # clear gradients for next train
