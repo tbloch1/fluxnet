@@ -35,7 +35,7 @@ def hetero_aleatoric(true,predval,predvar):
     return (rel_error/(2*torch.exp(predvar))) + residual
 
 def negative_log_likelihood(true, mu, sigma):
-    dist = D.multivariate_normal.MultivariateNormal(mu, scale_tril=sigma+1.0)
+    dist = D.multivariate_normal.MultivariateNormal(mu, scale_tril=sigma)
     return -dist.log_prob(true)
 
 def timeseries_sample(data, nbins=50, n_min=100,

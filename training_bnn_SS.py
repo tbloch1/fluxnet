@@ -285,10 +285,10 @@ for epoch in range(n_epochs):
 
     trainloss = loss_func(ytrain.float(),
                           prediction.float(),
-                          sigma.float())#.sum()
-    trainloss = torch.where(trainloss < 10000,
-                            trainloss,
-                            torch.tensor(10000).to(device).float()).median()
+                          sigma.float()).mean()
+    # trainloss = torch.where(trainloss < 10000,
+    #                         trainloss,
+    #                         torch.tensor(10000).to(device).float()).median()
     loss_report = loss_func(ytrain.float(),
                             prediction.float(),
                             sigma.float())
