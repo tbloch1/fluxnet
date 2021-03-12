@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import torch.distributions as D
 
 def mse_dim(true, pred):
     return np.mean( (pred-true)**2, axis=0)
@@ -34,6 +34,10 @@ def hetero_aleatoric(true,predval,predvar):
     residual = 0.5*predvar # Training for the log_e(var)
     return (rel_error/(2*torch.exp(predvar))) + residual
 
+def negative_log_likelihood(true, mu, sigma):
+    dist = D.multivariate_normal.MultivariateNormal(mu, scale_tril=sigma+1.0)
+    return -dist.log_prob(true)
+
 def timeseries_sample(data, nbins=50, n_min=100,
                       train_frac=0.7, val_frac=0.2, test_frac=0.1):
     data = data.sort_values('datetime')
@@ -44,10 +48,10 @@ def timeseries_sample(data, nbins=50, n_min=100,
     train, val, test = [],[],[]
 
     for amt, l_edge, r_edge in zip(n,edges[:-1],edges[1:]):
-        
+
         subset = data[(data.seconds > l_edge)
                           & (data.seconds < r_edge)]
-        
+
         if amt > n_min:
             train.append(subset[:int(train_frac*len(subset))])
             val.append(subset[int(train_frac*len(subset))
