@@ -254,6 +254,8 @@ if heads == 'Multi':
 if devstr == 'cuda':
     net = net.to(device)
 
+wandb.watch(net,log='all')
+
 optimizer = optimiser(net.parameters(), lr=lr)
 
 loss_func = helpers.hetero_aleatoric
@@ -271,8 +273,8 @@ for epoch in range(n_epochs):
     outputs = net(Xtrain.float())
     prediction = outputs[:,:,0].view(-1,11)
     variance = outputs[:,:,1].view(-1,11)
-    variance = torch.where(variance > -15, variance,
-                           torch.tensor(-15).to(device).float())
+    # variance = torch.where(variance > -15, variance,
+    #                        torch.tensor(-15).to(device).float())
     # variance = torch.where(variance < 3, variance,
     #                        torch.tensor(3).to(device).float())
     
@@ -281,9 +283,9 @@ for epoch in range(n_epochs):
     valvar = valout[:,:,1].view(-1,11)
 
     trainloss = loss_func(ytrain.float(),prediction.float(),
-                          variance.float())#.sum()
-    trainloss = torch.where(trainloss < 10000, trainloss,
-                            torch.tensor(10000).to(device).float()).median()
+                          variance.float()).sum()
+    # trainloss = torch.where(trainloss < 10000, trainloss,
+    #                         torch.tensor(10000).to(device).float()).median()
     loss_report = loss_func(ytrain.float(),prediction.float(),
                             variance.float())
     valloss = loss_func(yval.float(),valpred.float(),
@@ -305,6 +307,14 @@ for epoch in range(n_epochs):
         testvar1 = yscaler.inverse_transform(testvar.data.cpu().numpy())
         ytest_np = yscaler.inverse_transform(np.exp(ytest.data.cpu().numpy()))
 
+        print('train loss: ',trainloss)
+        print('train pred: ', prediction.mean())
+        print('train var: ', variance.mean())
+        print('val loss: ',valloss.sum())
+        print('val pred: ', valpred.mean())
+        print('val var: ', valvar.mean(),'\n')
+
+    if epoch%1000 == 0:
         plt.figure(figsize=(4,2.25),dpi=300)
         plt.scatter(testset.seconds[-200:],ytest_np[-200:,5],c='C0')
         plt.errorbar(x=testset.seconds[-200:],y=testpred1[-200:,5],
@@ -329,13 +339,6 @@ for epoch in range(n_epochs):
 
         wandb.log({"plot2": wandb.Image(plt)})
         plt.close()
-
-        print('train loss: ',trainloss)
-        print('train pred: ', prediction.mean())
-        print('train var: ', variance.mean())
-        print('val loss: ',valloss.median())
-        print('val pred: ', valpred.mean())
-        print('val var: ', valvar.mean(),'\n')
 
 
     optimizer.zero_grad()   # clear gradients for next train
