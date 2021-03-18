@@ -252,6 +252,8 @@ if heads == 'Multi':
 if devstr == 'cuda':
     net = net.to(device)
 
+wandb.watch(net,log='all')
+
 optimizer = optimiser(net.parameters(), lr=lr)
 
 # loss_func = helpers.hetero_aleatoric
@@ -294,6 +296,7 @@ for epoch in range(n_epochs):
     valloss = loss_func(yval.float(),
                         valpred.float(),
                         val_sigma.float())
+    
     # if torch.isnan(trainloss):
     #     import pdb; pdb.set_trace()
     # else:

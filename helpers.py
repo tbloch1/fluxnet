@@ -29,10 +29,15 @@ def smape_dim(true, pred):
 def skill_score(ref_metric,pred_metric):
     return(1-pred_metric/ref_metric)
 
+# def hetero_aleatoric(true,predval,predvar):
+#     rel_error = ((true-predval)**2)
+#     residual = 0.5*predvar # Training for the log_e(var)
+#     return (rel_error/(2*torch.exp(predvar))) + residual
+
 def hetero_aleatoric(true,predval,predvar):
     rel_error = ((true-predval)**2)
-    residual = 0.5*predvar # Training for the log_e(var)
-    return (rel_error/(2*torch.exp(predvar))) + residual
+    residual = 0.5*torch.log(torch.exp(predvar)+1e-04) # Training for the log_e(var)
+    return (rel_error/(2*(torch.exp(predvar)+1e-04))) + residual
 
 def negative_log_likelihood(true, mu, sigma):
     dist = D.MultivariateNormal(mu, torch.diag_embed(sigma))
