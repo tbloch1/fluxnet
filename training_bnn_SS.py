@@ -74,7 +74,7 @@ def clean_themis(df):
     # Limit to equator and boundary region.
     df = df[(df.r > 7.75) & (df.r < 8.75) &
             (df.pos_z_mag.abs() < 0.5)]
-    
+
     # Columns with bad data
     cols = ['esa_E_1', 'esa_E_2', 'esa_E_3', 'esa_E_4', 'esa_E_5',
             'esa_E_6', 'esa_E_7', 'esa_E_8', 'esa_E_9', 'esa_E_10',
@@ -84,7 +84,7 @@ def clean_themis(df):
             'spin_ra', 'spin_dec', 'spin_per','spin_phase',
             'pos_x_gei', 'pos_y_gei', 'pos_z_gei','mlt_mag']
     df = df.drop(columns=cols)
-    
+
     # Remove data with NaNs
     cols2 = ['esa_E_18', 'esa_E_19', 'esa_E_20', 'esa_E_21',
              'esa_E_22', 'esa_E_23','esa_E_24', 'esa_E_25',
@@ -94,7 +94,7 @@ def clean_themis(df):
              'E_8', 'E_9', 'E_10', 'E_11']
     df.loc[:,cols2] = df.loc[:,cols2].replace(0,np.nan).values
     df = df.dropna(subset=cols2)
-    
+
     print(df.shape)
     return df
 
@@ -109,7 +109,7 @@ the = clean_themis(pd.read_parquet(fnames_t[4]))
 print('GOES Data')
 def clean_goes(df):
     df = df[(df['800kevqual']==0) & (df['2mevqual']==0)]
-    
+
     print(df.shape)
     return df
 
@@ -178,7 +178,6 @@ def mlt_conjunction(themis,goes,mlt_lim,scname1,scname2):
     th_g['g14'] = np.ones(len(th_g)) if scname2 == 'g14' else np.zeros(len(th_g))
     th_g['g15'] = np.ones(len(th_g)) if scname2 == 'g15' else np.zeros(len(th_g))
 
-
     print(th_g.shape)
     return th_g
 
@@ -190,7 +189,6 @@ for themis,scname1 in zip([tha,thb,thc,thd,the],['tha','thb','thc','thd','the'])
 thgdf = pd.concat(th_g, ignore_index=True)
 print('Final Dataset Size: ',thgdf.shape)
 
-data_time = time.time()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 devstr = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -202,7 +200,7 @@ if heads == 'Multi':
 
 trainset, valset, testset = helpers.timeseries_sample(thgdf)
 
-# X = thgdf[parameters].values                         
+# X = thgdf[parameters].values
 # y = np.log10(thgdf[target_parameters]).values
 
 Xscaler = StandardScaler().fit(trainset[parameters].values)
@@ -220,7 +218,7 @@ yval = torch.from_numpy(yscaler.transform(np.log10(valset[target_parameters]).va
 Xtest = torch.from_numpy(Xscaler.transform(testset[parameters].values))
 ytest = torch.from_numpy(yscaler.transform(np.log10(testset[target_parameters]).values))
 
-# X = thgdf[parameters].values                         
+# X = thgdf[parameters].values
 # y = np.log10(thgdf[target_parameters]).values
 
 # Xscaler = StandardScaler().fit(X[:int(0.6*len(X))])
@@ -247,7 +245,7 @@ if devstr == 'cuda':
     Xtest = Xtest.to(device)
     ytest = ytest.to(device)
 
-    
+
 net = model(n_feature=len(parameters), n_hidden=n_hidden, n_output=1)
 if heads == 'Multi':
     net = model(n_feature=len(parameters), n_hidden=n_hidden, n_output=11)
@@ -258,7 +256,8 @@ wandb.watch(net,log='all')
 
 optimizer = optimiser(net.parameters(), lr=lr)
 
-loss_func = helpers.hetero_aleatoric
+# loss_func = helpers.hetero_aleatoric
+loss_func = helpers.negative_log_likelihood
 
 savepath = '/storage/silver/stfc_cg/hf832176/data/goes/training/'
 model_folder = 'models/{0:05d}_ensemble/model_{1}/'.format(len(glob.glob(savepath+'*')),1)
@@ -269,27 +268,35 @@ if not os.path.exists(savepath+model_folder):
         print(e)
 
 
+MIN_SIGMA = 1e-04
+MAX_SIGMA = 10
+
 for epoch in range(n_epochs):
     outputs = net(Xtrain.float())
     prediction = outputs[:,:,0].view(-1,11)
-    variance = outputs[:,:,1].view(-1,11)
-    # variance = torch.where(variance > -15, variance,
-    #                        torch.tensor(-15).to(device).float())
-    # variance = torch.where(variance < 3, variance,
-    #                        torch.tensor(3).to(device).float())
-    
+    sigma = outputs[:,:,1].view(-1,11)
+
+    sigma = sigma.to(device).float()
+    sigma = MIN_SIGMA + (MAX_SIGMA - MIN_SIGMA) * torch.sigmoid(sigma)
+
     valout = net(Xval.float())
     valpred = valout[:,:,0].view(-1,11)
-    valvar = valout[:,:,1].view(-1,11)
+    val_sigma = valout[:,:,1].view(-1,11)
+    val_sigma = MIN_SIGMA + (MAX_SIGMA - MIN_SIGMA) * torch.sigmoid(val_sigma)
 
-    trainloss = loss_func(ytrain.float(),prediction.float(),
-                          variance.float()).sum()
-    # trainloss = torch.where(trainloss < 10000, trainloss,
+    trainloss = loss_func(ytrain.float(),
+                          prediction.float(),
+                          sigma.float()).mean()
+    # trainloss = torch.where(trainloss < 10000,
+    #                         trainloss,
     #                         torch.tensor(10000).to(device).float()).median()
-    loss_report = loss_func(ytrain.float(),prediction.float(),
-                            variance.float())
-    valloss = loss_func(yval.float(),valpred.float(),
-                        valvar.float())
+    loss_report = loss_func(ytrain.float(),
+                            prediction.float(),
+                            sigma.float())
+    valloss = loss_func(yval.float(),
+                        valpred.float(),
+                        val_sigma.float())
+    
     # if torch.isnan(trainloss):
     #     import pdb; pdb.set_trace()
     # else:
@@ -299,46 +306,22 @@ for epoch in range(n_epochs):
     if epoch%100 == 0:
         testout = net(Xtest.float())
         testpred = testout[:,:,0].view(-1,11)
-        testvar = testout[:,:,1].view(-1,11)
+        test_sigma = testout[:,:,1].view(-1,11)
+        test_sigma = test_sigma.to(device).float()
+        test_sigma = MIN_SIGMA + (MAX_SIGMA - MIN_SIGMA) * torch.sigmoid(test_sigma)
         testloss = (loss_func(ytest.float(), testpred.float(),
-                              testvar.float()))
+                              test_sigma.float()))
 
         testpred1 = yscaler.inverse_transform(testpred.data.cpu().numpy())
-        testvar1 = yscaler.inverse_transform(testvar.data.cpu().numpy())
+        test_sigma1 = yscaler.inverse_transform(test_sigma.data.cpu().numpy())
         ytest_np = yscaler.inverse_transform(np.exp(ytest.data.cpu().numpy()))
 
         print('train loss: ',trainloss)
         print('train pred: ', prediction.mean())
-        print('train var: ', variance.mean())
-        print('val loss: ',valloss.sum())
+        print('train var: ', sigma.mean())
+        print('val loss: ',valloss.median())
         print('val pred: ', valpred.mean())
-        print('val var: ', valvar.mean(),'\n')
-
-    if epoch%1000 == 0:
-        plt.figure(figsize=(4,2.25),dpi=300)
-        plt.scatter(testset.seconds[-200:],ytest_np[-200:,5],c='C0')
-        plt.errorbar(x=testset.seconds[-200:],y=testpred1[-200:,5],
-                     yerr=testvar1[-200:,5],c='C1',fmt='o',capsize=6)
-        plt.ylabel('Log(flux)')
-        plt.xlabel('Unix epoch time')
-        plt.title('E_6')
-
-        wandb.log({"plot": wandb.Image(plt)})
-        plt.close()
-
-        plt.figure(figsize=(4,2.25),dpi=300)
-        plt.scatter(np.arange(200),
-                    np.exp(ytest.data.cpu().numpy())[-200:,5],c='C0')
-        plt.errorbar(x=np.arange(200),
-                     y=testpred.data.cpu().numpy()[-200:,5],
-                     yerr=testvar.data.cpu().numpy()[-200:,5],
-                     c='C1',fmt='o',capsize=6)
-        plt.ylabel('Log(flux)')
-        plt.xlabel('Unix epoch time')
-        plt.title('E_6 (scaled)')
-
-        wandb.log({"plot2": wandb.Image(plt)})
-        plt.close()
+        print('val var: ', val_sigma.mean(),'\n')
 
 
     optimizer.zero_grad()   # clear gradients for next train
