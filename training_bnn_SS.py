@@ -178,7 +178,6 @@ def mlt_conjunction(themis,goes,mlt_lim,scname1,scname2):
     th_g['g14'] = np.ones(len(th_g)) if scname2 == 'g14' else np.zeros(len(th_g))
     th_g['g15'] = np.ones(len(th_g)) if scname2 == 'g15' else np.zeros(len(th_g))
 
-
     print(th_g.shape)
     return th_g
 
@@ -190,7 +189,6 @@ for themis,scname1 in zip([tha,thb,thc,thd,the],['tha','thb','thc','thd','the'])
 thgdf = pd.concat(th_g, ignore_index=True)
 print('Final Dataset Size: ',thgdf.shape)
 
-data_time = time.time()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 devstr = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -314,31 +312,6 @@ for epoch in range(n_epochs):
         testpred1 = yscaler.inverse_transform(testpred.data.cpu().numpy())
         test_sigma1 = yscaler.inverse_transform(test_sigma.data.cpu().numpy())
         ytest_np = yscaler.inverse_transform(np.exp(ytest.data.cpu().numpy()))
-
-        plt.figure(figsize=(4,2.25),dpi=300)
-        plt.scatter(testset.seconds[-200:],ytest_np[-200:,5],c='C0')
-        plt.errorbar(x=testset.seconds[-200:],y=testpred1[-200:,5],
-                     yerr=test_sigma1[-200:,5],c='C1',fmt='o',capsize=6)
-        plt.ylabel('Log(flux)')
-        plt.xlabel('Unix epoch time')
-        plt.title('E_6')
-
-        wandb.log({"plot": wandb.Image(plt)})
-        plt.close()
-
-        plt.figure(figsize=(4,2.25),dpi=300)
-        plt.scatter(np.arange(200),
-                    np.exp(ytest.data.cpu().numpy())[-200:,5],c='C0')
-        plt.errorbar(x=np.arange(200),
-                     y=testpred.data.cpu().numpy()[-200:,5],
-                     yerr=testvar.data.cpu().numpy()[-200:,5],
-                     c='C1',fmt='o',capsize=6)
-        plt.ylabel('Log(flux)')
-        plt.xlabel('Unix epoch time')
-        plt.title('E_6 (scaled)')
-
-        wandb.log({"plot2": wandb.Image(plt)})
-        plt.close()
 
         print('train loss: ',trainloss)
         print('train pred: ', prediction.mean())
